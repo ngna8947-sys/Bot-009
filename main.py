@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN          = "8819304095:AAHKZRYR2sEr5nLB0wI0O3ti-D_eq1kXmBM"
 ADMIN_ID           = 5915683588
 
-# ព័ត៌មានគណនី ABA របស់អ្នក
-BANK_ACCOUNT_ID    = "126090314291066@abaa"  # គណនី ABA របស់អ្នក
-MERCHANT_NAME      = "MON SAMNANG"
-MERCHANT_CITY      = "KAMPONG THOM"
+# គណនី Bakong ID ផ្លូវការរបស់អ្នក
+BAKONG_ACCOUNT_ID  = "mon_samnang@bkrt"
+MERCHANT_NAME      = "SmeyLov"
+MERCHANT_CITY      = "Phnom Penh"
 DEPOSIT_EXPIRE_SEC = 300  # ៥ នាទី
 POLL_INTERVAL      = 5
 
@@ -71,7 +71,7 @@ def ded_bal(uid, amt):
     _save(WALLETS_FILE, wallets)
 
 # ═══════════════════════════════════════════════════════════
-#  NBC COMPLIANT DYNAMIC KHQR (WITH AUTO AMOUNT)
+#  OFFICIAL NBC DYNAMIC KHQR BUILDER (EMVCo TAG 29)
 # ═══════════════════════════════════════════════════════════
 def _calc_crc16(data_bytes):
     crc = 0xFFFF
@@ -88,7 +88,7 @@ def _tag(tag_id, value):
     val_str = str(value)
     return f"{tag_id:02d}{len(val_str):02d}{val_str}"
 
-def _generate_dynamic_khqr(account_id, amount, bill_no):
+def _generate_bakong_dynamic_khqr(account_id, amount, bill_no):
     # Tag 29: Bakong Standard Account (NBC)
     sub29 = _tag(0, "bakong@nbc") + _tag(1, account_id)
     tag29 = _tag(29, sub29)
@@ -98,17 +98,17 @@ def _generate_dynamic_khqr(account_id, amount, bill_no):
     tag62 = _tag(62, sub62)
 
     raw = (
-        _tag(0, "01") +                # Payload Format
-        _tag(1, "12") +                # 12 = Dynamic (មានចំនួនលុយជាប់ស្រាប់)
-        tag29 +                        # Tag 29 Account
-        _tag(52, "5999") +             # Category
+        _tag(0, "01") +                # Payload Format Indicator
+        _tag(1, "12") +                # 12 = Dynamic QR (មានភ្ជាប់ទឹកប្រាក់ស្រាប់)
+        tag29 +                        # Tag 29 Bakong Account
+        _tag(52, "5999") +             # Merchant Category Code
         _tag(53, "840") +              # 840 = USD
         _tag(54, amt_str) +            # ចំនួនទឹកប្រាក់អូតូម៉ាទិក
-        _tag(58, "KH") +               # Country
-        _tag(59, MERCHANT_NAME[:25]) + # MON SAMNANG
-        _tag(60, MERCHANT_CITY[:15]) + # KAMPONG THOM
-        tag62 +                        # Reference
-        "6304"                         # CRC Tag
+        _tag(58, "KH") +               # Country Code
+        _tag(59, MERCHANT_NAME[:25]) + # Merchant Name
+        _tag(60, MERCHANT_CITY[:15]) + # Merchant City
+        tag62 +                        # Reference / Invoice No
+        "6304"                         # CRC Header
     )
     return raw + _calc_crc16(raw.encode("utf-8"))
 
@@ -254,9 +254,9 @@ def _send_deposit_qr(uid, amount):
     bill_no = f"INV{uid}{int(time.time())}"[:20]
     
     try:
-        qr_str = _generate_dynamic_khqr(BANK_ACCOUNT_ID, amount, bill_no)
+        qr_str = _generate_bakong_dynamic_khqr(BAKONG_ACCOUNT_ID, amount, bill_no)
     except Exception as e:
-        logger.error(f"Error building QR: {e}")
+        logger.error(f"Error building Dynamic KHQR: {e}")
         bot.send_message(uid, "⚠️ មានបញ្ហាបង្កើត QR! សូមទាក់ទង Admin")
         return
 
@@ -266,6 +266,7 @@ def _send_deposit_qr(uid, amount):
 
     initial_cap = _build_caption(amount, DEPOSIT_EXPIRE_SEC)
 
+    # ប៊ូតុងបញ្ជាក់លុយសម្រាប់ Admin
     admin_kb_dep = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ បញ្ចូលលុយឱ្យ", callback_data=f"manual_dep:approve:{dep_id}"),
          InlineKeyboardButton("❌ បដិសេធ", callback_data=f"manual_dep:reject:{dep_id}")]
@@ -273,9 +274,9 @@ def _send_deposit_qr(uid, amount):
     try: 
         bot.send_message(
             ADMIN_ID, 
-            f"📥 <b>ការស្នើដាក់លុយថ្មី!</b>\n"
+            f"📥 <b>ការស្នើដាក់លុយថ្មី (Bakong)!</b>\n"
             f"👤 <code>{uid_str}</code> | 💰 <b>${amount:.2f}</b>\n"
-            f"💡 <i>សូមពិនិត្យ ABA ប្រសិនបើឃើញប្រាក់ចូល ចុចប៊ូតុងខាងក្រោម៖</i>", 
+            f"💡 <i>សូមពិនិត្យ Bakong/ABA ប្រសិនបើឃើញប្រាក់ចូល ចុចប៊ូតុងខាងក្រោម៖</i>", 
             reply_markup=admin_kb_dep
         )
     except: pass
