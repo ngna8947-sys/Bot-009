@@ -164,10 +164,14 @@ def _generate_khqr(uid, amount, note=""):
     try:
         from bakong_khqr import KHQR
         k = KHQR(BAKONG_TOKEN)
+        # បង្កើត Bill Number ឱ្យត្រឹមត្រូវ គ្មានសញ្ញាពិសេស និងគ្មានដកឃ្លា
+        clean_bill = note if note else f"INV{uid}{int(time.time())}"
+        clean_bill = "".join(ch for ch in clean_bill if ch.isalnum())[:20]
+
         return k.create_qr(
             bank_account=BANK_ACCOUNT, merchant_name=MERCHANT_NAME,
             merchant_city=MERCHANT_CITY, amount=round(float(amount), 2),
-            currency="USD", bill_number=(note or f"uid{uid}")[:25], static=False
+            currency="USD", bill_number=clean_bill, static=False
         ) or ""
     except Exception as e:
         logger.error(f"[_generate_khqr] Error: {e}")
@@ -219,7 +223,7 @@ def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts)
             except: pass
             return
 
-        # កំណត់ឱ្យរត់ថយក្រោយរៀងរាល់ 10 វិនាទី
+        # អាប់ដេតនាទីថយក្រោយរៀងរាល់ 10 វិនាទី
         if now - last_edit_time >= 10 and msg_id:
             try:
                 bot.edit_message_caption(
@@ -231,7 +235,7 @@ def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts)
 
         time.sleep(POLL_INTERVAL)
 
-    # ពេលផុតកំណត់ ៥ នាទី
+    # ផុតកំណត់ ៥ នាទី
     dep = store_deps.get(dep_id)
     if dep and dep.get("status") == "pending":
         dep["status"] = "expired"
@@ -246,7 +250,9 @@ def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts)
 
 def _send_deposit_qr(uid, amount):
     uid_str = str(uid)
-    qr_str = _generate_khqr(uid, amount, f"uid={uid} ${amount}")
+    # បង្កើត Bill Number ឱ្យស្របតាមស្តង់ដារ KHQR (គ្មានដកឃ្លា និងគ្មានសញ្ញាពិសេស)
+    bill_no = f"INV{uid}{int(time.time())}"[:20]
+    qr_str = _generate_khqr(uid, amount, bill_no)
     if not qr_str:
         bot.send_message(uid, "⚠️ មានបញ្ហាបង្កើត QR! សូមទាក់ទង Admin"); return
 
