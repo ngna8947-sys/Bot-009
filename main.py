@@ -28,9 +28,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN          = "8819304095:AAHKZRYR2sEr5nLB0wI0O3ti-D_eq1kXmBM"
 ADMIN_ID           = 5915683588
 
-# ABA KHQR Config (យកតាម Original Decoded QR របស់អ្នកផ្ទាល់)
+# ABA PAYWAY RAW QR (យកតាម QR ដើមពិតប្រាកដរបស់អ្នក)
+ABA_RAW_QR         = "00020101021130510016abaakhppxxx@abaa01151260903142910660208ABA Bank5204651353038405802KH5911MON SAMNANG6012KAMPONG THOM624268380010PAYWAY@ABA01071950962020903248607663044150"
 MERCHANT_NAME      = "SmeyLov"
-MERCHANT_CITY      = "KAMPONG THOM"
 DEPOSIT_EXPIRE_SEC = 300  # ៥ នាទី
 POLL_INTERVAL      = 5
 
@@ -70,9 +70,9 @@ def ded_bal(uid, amt):
     _save(WALLETS_FILE, wallets)
 
 # ═══════════════════════════════════════════════════════════
-#  ABA PAYWAY KHQR BUILDER (ACCORDING TO YOUR ABA QR)
+#  DYNAMIC ABA KHQR GENERATOR
 # ═══════════════════════════════════════════════════════════
-def _calc_crc16_ccitt(data_bytes):
+def _calc_crc16(data_bytes):
     crc = 0xFFFF
     for b in data_bytes:
         crc ^= (b << 8)
@@ -83,38 +83,20 @@ def _calc_crc16_ccitt(data_bytes):
                 crc = (crc << 1) & 0xFFFF
     return f"{crc:04X}"
 
-def _tag(tag_id, value):
-    val_str = str(value)
-    return f"{tag_id:02d}{len(val_str):02d}{val_str}"
-
-def _generate_aba_khqr(amount, bill_no):
-    # Tag 30: ABA Bank PayWay Specific Account Configuration
-    sub30 = _tag(0, "abaakhppxxx@abaa") + _tag(1, "126090314291066")
-    tag30 = _tag(30, sub30)
-
-    # Tag 62: Additional Data (Reference/Bill)
-    sub62 = _tag(1, "PAYWAY@ABA") + _tag(7, "195096") + _tag(9, bill_no[:20])
-    tag62 = _tag(62, sub62)
-
+def _build_aba_qr_with_amount(amount):
+    # បំប្លែង Tag 01 ទៅ 12 (Dynamic QR) និងបន្ថែម Tag 54 (Amount)
     amt_str = f"{float(amount):.2f}"
-
-    raw = (
-        _tag(0, "01") +                # Payload Format Indicator
-        _tag(1, "12") +                # Dynamic QR (12)
-        tag30 +                        # Tag 30 ABA PayWay
-        _tag(52, "0465") +             # Merchant Category Code
-        _tag(53, "840") +              # USD (840)
-        _tag(54, amt_str) +            # Amount
-        _tag(58, "KH") +               # Country
-        _tag(59, MERCHANT_NAME) +      # MON SAMNANG
-        _tag(60, MERCHANT_CITY) +      # KAMPONG THOM
-        tag62 +                        # Tag 62
-        "6304"                         # CRC Tag Header
-    )
-    return raw + _calc_crc16_ccitt(raw.encode("utf-8"))
+    tag54 = f"54{len(amt_str):02d}{amt_str}"
+    
+    # ផ្ដាច់ផ្នែកខាងមុខ Tag 58 រួចបញ្ចូល Tag 54 ចូល
+    prefix = ABA_RAW_QR[:87].replace("010211", "010212")
+    suffix = ABA_RAW_QR[87:-4]
+    
+    payload = prefix + tag54 + suffix
+    return payload + _calc_crc16(payload.encode("utf-8"))
 
 # ═══════════════════════════════════════════════════════════
-#  DRAW STYLED KHQR TEMPLATE
+#  DRAW STYLED ABA KHQR TEMPLATE
 # ═══════════════════════════════════════════════════════════
 def _generate_styled_khqr_image(qr_str, amount, merchant_name):
     card_w, card_h = 600, 920
@@ -128,8 +110,7 @@ def _generate_styled_khqr_image(qr_str, amount, merchant_name):
     draw = ImageDraw.Draw(card)
 
     header_h = 135
-    header_color = "#E11A22"
-    draw.rectangle([(0, 0), (card_w, header_h)], fill=header_color)
+    draw.rectangle([(0, 0), (card_w, header_h)], fill="#E11A22")
 
     font_header, font_name, font_amt, font_curr, font_logo = None, None, None, None, None
     for f_path in ["arialbd.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", "DejaVuSans-Bold.ttf"]:
@@ -211,6 +192,7 @@ def _build_caption(amount, remaining_sec):
         f"━━━━━━━━━━━━━━━━━━\n"
         f"💰 ចំនួន: <b>${amount:.2f}</b>\n"
         f"👤 អ្នកទទួល: <b>{MERCHANT_NAME}</b>\n"
+        f"🏦 ធនាគារ: <b>ABA Bank</b>\n"
         f"⏱ ផុតកំណត់ក្នុងរយ: <b>{timer_text} នាទី</b> ⏳\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"📱 Scan ជាមួយ ABA Mobile / Bakong"
@@ -254,14 +236,11 @@ def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts)
 
 def _send_deposit_qr(uid, amount):
     uid_str = str(uid)
-    bill_no = f"INV{uid}{int(time.time())}"[:20]
     
     try:
-        qr_str = _generate_aba_khqr(amount, bill_no)
-    except Exception as e:
-        logger.error(f"Error building QR: {e}")
-        bot.send_message(uid, "⚠️ មានបញ្ហាបង្កើត QR! សូមទាក់ទង Admin")
-        return
+        qr_str = _build_aba_qr_with_amount(amount)
+    except Exception:
+        qr_str = ABA_RAW_QR
 
     dep_id = f"dep_{uid}_{int(time.time())}"
     store_deps[dep_id] = {"uid": uid_str, "amount": amount, "status": "pending", "qr_str": qr_str}
@@ -269,13 +248,18 @@ def _send_deposit_qr(uid, amount):
 
     initial_cap = _build_caption(amount, DEPOSIT_EXPIRE_SEC)
 
-    # ប៊ូតុងសម្រាប់ Admin បញ្ចូលលុយជូនភ្លាមៗពេលភ្ញៀវបាញ់ចូលគណនី ABA
     admin_kb_dep = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ បញ្ចូលលុយឱ្យ", callback_data=f"manual_dep:approve:{dep_id}"),
          InlineKeyboardButton("❌ បដិសេធ", callback_data=f"manual_dep:reject:{dep_id}")]
     ])
     try: 
-        bot.send_message(ADMIN_ID, f"📥 <b>ការស្នើដាក់លុយថ្មី!</b>\n👤 <code>{uid_str}</code> | 💰 <b>${amount:.2f}</b>\n💡 <i>សូមពិនិត្យ ABA ប្រសិនបើឃើញលុយចូល ចុចប៊ូតុងខាងក្រោម៖</i>", reply_markup=admin_kb_dep)
+        bot.send_message(
+            ADMIN_ID, 
+            f"📥 <b>ការស្នើដាក់លុយថ្មី (ABA)!</b>\n"
+            f"👤 <code>{uid_str}</code> | 💰 <b>${amount:.2f}</b>\n"
+            f"💡 <i>សូមពិនិត្យមើលកម្មវិធី ABA ប្រសិនបើឃើញប្រាក់ចូល ចុចប៊ូតុងខាងក្រោម៖</i>", 
+            reply_markup=admin_kb_dep
+        )
     except: pass
 
     sent_msg = None
@@ -417,7 +401,7 @@ def handle_callbacks(call):
             dep["status"] = "confirmed"
             _save(STORE_DEP_FILE, store_deps)
             bot.answer_callback_query(call.id, "✅ បានបញ្ចូលលុយជូនរួចរាល់")
-            try: bot.send_message(target_uid, f"✅ <b>Admin បានបញ្ចូលលុយជូន:</b> +${amt:.2f}\n💳 សរុប: <b>${bal(target_uid):.2f}</b>")
+            try: bot.send_message(target_uid, f"✅ <b>Admin បានបញ្ចូលលុយជូន:</b> +${amt:.2f}\n💳 សរុប: <b>${bal(target_uid):.2f}</b>", reply_markup=user_kb())
             except: pass
         elif act == "reject":
             dep["status"] = "rejected"
