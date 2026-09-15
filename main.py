@@ -28,10 +28,11 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN          = "8819304095:AAHKZRYR2sEr5nLB0wI0O3ti-D_eq1kXmBM"
 ADMIN_ID           = 5915683588
 
-# ABA PAYWAY RAW QR (កូដដើមសុទ្ធ ១០០% គ្មានការកែប្រែ)
-ABA_RAW_QR         = "00020101021130510016abaakhppxxx@abaa01151260903142910660208ABA Bank5204651353038405802KH5911MON SAMNANG6012KAMPONG THOM624268380010PAYWAY@ABA01071950962020903248607663044150"
+# ព័ត៌មានគណនី ABA របស់អ្នក
+BANK_ACCOUNT_ID    = "126090314291066@abaa"  # គណនី ABA របស់អ្នក
 MERCHANT_NAME      = "MON SAMNANG"
-DEPOSIT_EXPIRE_SEC = 300
+MERCHANT_CITY      = "KAMPONG THOM"
+DEPOSIT_EXPIRE_SEC = 300  # ៥ នាទី
 POLL_INTERVAL      = 5
 
 # ═══════════════════════════════════════════════════════════
@@ -70,7 +71,49 @@ def ded_bal(uid, amt):
     _save(WALLETS_FILE, wallets)
 
 # ═══════════════════════════════════════════════════════════
-#  DRAW STYLED ABA KHQR TEMPLATE
+#  NBC COMPLIANT DYNAMIC KHQR (WITH AUTO AMOUNT)
+# ═══════════════════════════════════════════════════════════
+def _calc_crc16(data_bytes):
+    crc = 0xFFFF
+    for b in data_bytes:
+        crc ^= (b << 8)
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return f"{crc:04X}"
+
+def _tag(tag_id, value):
+    val_str = str(value)
+    return f"{tag_id:02d}{len(val_str):02d}{val_str}"
+
+def _generate_dynamic_khqr(account_id, amount, bill_no):
+    # Tag 29: Bakong Standard Account (NBC)
+    sub29 = _tag(0, "bakong@nbc") + _tag(1, account_id)
+    tag29 = _tag(29, sub29)
+
+    amt_str = f"{float(amount):.2f}"
+    sub62 = _tag(1, bill_no[:20])
+    tag62 = _tag(62, sub62)
+
+    raw = (
+        _tag(0, "01") +                # Payload Format
+        _tag(1, "12") +                # 12 = Dynamic (មានចំនួនលុយជាប់ស្រាប់)
+        tag29 +                        # Tag 29 Account
+        _tag(52, "5999") +             # Category
+        _tag(53, "840") +              # 840 = USD
+        _tag(54, amt_str) +            # ចំនួនទឹកប្រាក់អូតូម៉ាទិក
+        _tag(58, "KH") +               # Country
+        _tag(59, MERCHANT_NAME[:25]) + # MON SAMNANG
+        _tag(60, MERCHANT_CITY[:15]) + # KAMPONG THOM
+        tag62 +                        # Reference
+        "6304"                         # CRC Tag
+    )
+    return raw + _calc_crc16(raw.encode("utf-8"))
+
+# ═══════════════════════════════════════════════════════════
+#  DRAW STYLED KHQR TEMPLATE
 # ═══════════════════════════════════════════════════════════
 def _generate_styled_khqr_image(qr_str, amount, merchant_name):
     card_w, card_h = 600, 920
@@ -164,13 +207,11 @@ def _build_caption(amount, remaining_sec):
     return (
         f"💳 <b>ដាក់ប្រាក់ (Top Up)</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"💰 ចំនួន: <b>${amount:.2f}</b>\n"
+        f"💰 ចំនួន: <b>${amount:.2f}</b> (បញ្ចូលរួចស្រេច)\n"
         f"👤 អ្នកទទួល: <b>{MERCHANT_NAME}</b>\n"
-        f"🏦 ធនាគារ: <b>ABA Bank</b>\n"
         f"⏱ ផុតកំណត់ក្នុងរយ: <b>{timer_text} នាទី</b> ⏳\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📱 Scan ជាមួយ ABA Mobile / Bakong\n"
-        f"💡 <i>(សូមបញ្ចូលទឹកប្រាក់ចំនួន ${amount:.2f} ពេល Scan)</i>"
+        f"📱 Scan ជាមួយ ABA / Bakong / Wing"
     )
 
 def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts):
@@ -210,7 +251,14 @@ def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts)
 
 def _send_deposit_qr(uid, amount):
     uid_str = str(uid)
-    qr_str = ABA_RAW_QR  # ប្រើកូដដើមសុទ្ធដែល ABA បង្កើតជូន
+    bill_no = f"INV{uid}{int(time.time())}"[:20]
+    
+    try:
+        qr_str = _generate_dynamic_khqr(BANK_ACCOUNT_ID, amount, bill_no)
+    except Exception as e:
+        logger.error(f"Error building QR: {e}")
+        bot.send_message(uid, "⚠️ មានបញ្ហាបង្កើត QR! សូមទាក់ទង Admin")
+        return
 
     dep_id = f"dep_{uid}_{int(time.time())}"
     store_deps[dep_id] = {"uid": uid_str, "amount": amount, "status": "pending", "qr_str": qr_str}
@@ -225,7 +273,7 @@ def _send_deposit_qr(uid, amount):
     try: 
         bot.send_message(
             ADMIN_ID, 
-            f"📥 <b>ការស្នើដាក់លុយថ្មី (ABA)!</b>\n"
+            f"📥 <b>ការស្នើដាក់លុយថ្មី!</b>\n"
             f"👤 <code>{uid_str}</code> | 💰 <b>${amount:.2f}</b>\n"
             f"💡 <i>សូមពិនិត្យ ABA ប្រសិនបើឃើញប្រាក់ចូល ចុចប៊ូតុងខាងក្រោម៖</i>", 
             reply_markup=admin_kb_dep
