@@ -72,35 +72,33 @@ def ded_bal(uid, amt):
     _save(WALLETS_FILE, wallets)
 
 # ═══════════════════════════════════════════════════════════
-#  NATIVE EMVCO KHQR GENERATOR (NO TOKEN CONFIG NEEDED)
+#  NATIVE EMVCO KHQR GENERATOR
 # ═══════════════════════════════════════════════════════════
 def _tag(tag_id, value):
     val_str = str(value)
     return f"{tag_id:02d}{len(val_str):02d}{val_str}"
 
 def _generate_native_khqr(account, name, city, amount, bill_no):
-    # Tag 29: Merchant Account Info (Bakong)
     sub29 = _tag(0, account)
     tag29 = _tag(29, sub29)
 
-    # Tag 62: Additional Data Field (Bill number)
     sub62 = _tag(1, bill_no[:25])
     tag62 = _tag(62, sub62)
 
     amt_str = f"{float(amount):.2f}"
     
     raw = (
-        _tag(0, "01") +                # Payload Format Indicator
-        _tag(1, "12") +                # Dynamic QR
-        tag29 +                        # Bakong Account
-        _tag(52, "5999") +             # Merchant Category Code
-        _tag(53, "840") +              # Currency: USD (840)
-        _tag(54, amt_str) +            # Amount
-        _tag(58, "KH") +               # Country
-        _tag(59, name[:25]) +          # Merchant Name
-        _tag(60, city[:15]) +          # Merchant City
-        tag62 +                        # Bill Info
-        "6304"                         # CRC Header
+        _tag(0, "01") +
+        _tag(1, "12") +
+        tag29 +
+        _tag(52, "5999") +
+        _tag(53, "840") +
+        _tag(54, amt_str) +
+        _tag(58, "KH") +
+        _tag(59, name[:25]) +
+        _tag(60, city[:15]) +
+        tag62 +
+        "6304"
     )
 
     crc16 = crcmod.predefined.Crc("crc-ccitt-false")
@@ -109,7 +107,7 @@ def _generate_native_khqr(account, name, city, amount, bill_no):
     return raw + crc_hex
 
 # ═══════════════════════════════════════════════════════════
-#  DRAW STYLED KHQR TEMPLATE (HD & ROUNDED CORNERS)
+#  DRAW STYLED KHQR TEMPLATE
 # ═══════════════════════════════════════════════════════════
 def _generate_styled_khqr_image(qr_str, amount, merchant_name):
     card_w, card_h = 600, 920
@@ -200,7 +198,6 @@ def _generate_styled_khqr_image(qr_str, amount, merchant_name):
 def _generate_khqr(uid, amount, note=""):
     try:
         clean_bill = "".join(ch for ch in (note or f"INV{uid}{int(time.time())}") if ch.isalnum())[:20]
-        # បង្កើតតាម Native EMVCo KHQR ដោយមិនពឹងលើ Token Dashboard
         return _generate_native_khqr(BANK_ACCOUNT, MERCHANT_NAME, MERCHANT_CITY, amount, clean_bill)
     except Exception as e:
         logger.error(f"[_generate_khqr] Error: {e}")
@@ -252,7 +249,6 @@ def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts)
             except: pass
             return
 
-        # អាប់ដេតនាទីរៀងរាល់ 10 វិនាទី
         if now - last_edit_time >= 10 and msg_id:
             try:
                 bot.edit_message_caption(
