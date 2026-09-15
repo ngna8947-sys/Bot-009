@@ -72,7 +72,7 @@ def ded_bal(uid, amt):
     _save(WALLETS_FILE, wallets)
 
 # ═══════════════════════════════════════════════════════════
-#  PURE PYTHON CRC-16 & EMVCO KHQR
+#  GENUINE BAKONG EMVCO KHQR BUILDER (ACCORDING TO NBC SPECS)
 # ═══════════════════════════════════════════════════════════
 def _calc_crc16_ccitt(data_bytes):
     crc = 0xFFFF
@@ -89,27 +89,29 @@ def _tag(tag_id, value):
     val_str = str(value)
     return f"{tag_id:02d}{len(val_str):02d}{val_str}"
 
-def _generate_native_khqr(account, name, city, amount, bill_no):
-    sub29 = _tag(0, account)
+def _generate_bakong_standard_khqr(account_id, name, city, amount, bill_no):
+    # Tag 29: Bakong Individual/Merchant format ស្របតាមស្តង់ដារធនាគារជាតិ NBC
+    # Sub-tag 00: Global Unique Identifier
+    # Sub-tag 01: Bakong Account ID (e.g. samnang_mon@bkrt)
+    sub29 = _tag(0, "bakong_khqr") + _tag(1, account_id)
     tag29 = _tag(29, sub29)
 
+    amt_str = f"{float(amount):.2f}"
     sub62 = _tag(1, bill_no[:25])
     tag62 = _tag(62, sub62)
 
-    amt_str = f"{float(amount):.2f}"
-    
     raw = (
-        _tag(0, "01") +
-        _tag(1, "12") +
-        tag29 +
-        _tag(52, "5999") +
-        _tag(53, "840") +
-        _tag(54, amt_str) +
-        _tag(58, "KH") +
-        _tag(59, name[:25]) +
-        _tag(60, city[:15]) +
-        tag62 +
-        "6304"
+        _tag(0, "01") +                # Payload Format Indicator
+        _tag(1, "12") +                # 12 = Dynamic QR (មានកំណត់ទឹកប្រាក់)
+        tag29 +                        # Merchant Account Information
+        _tag(52, "5999") +             # Merchant Category Code
+        _tag(53, "840") +              # 840 = USD
+        _tag(54, amt_str) +            # ចំនួនទឹកប្រាក់
+        _tag(58, "KH") +               # Country Code
+        _tag(59, name[:25]) +          # Merchant Name
+        _tag(60, city[:15]) +          # Merchant City
+        tag62 +                        # Additional Data
+        "6304"                         # CRC Tag
     )
     return raw + _calc_crc16_ccitt(raw.encode("utf-8"))
 
@@ -204,11 +206,25 @@ def _generate_styled_khqr_image(qr_str, amount, merchant_name):
 # ═══════════════════════════════════════════════════════════
 def _generate_khqr(uid, amount, note=""):
     try:
-        clean_bill = "".join(ch for ch in (note or f"INV{uid}{int(time.time())}") if ch.isalnum())[:20]
-        return _generate_native_khqr(BANK_ACCOUNT, MERCHANT_NAME, MERCHANT_CITY, amount, clean_bill)
-    except Exception as e:
-        logger.error(f"[_generate_khqr] Error: {e}")
-        return ""
+        # សាកល្បងហៅតាម bakong_khqr library (បើ Store token ត្រឹមត្រូវ)
+        from bakong_khqr import KHQR
+        k = KHQR(BAKONG_TOKEN)
+        qr = k.create_qr(
+            account_id=BANK_ACCOUNT,
+            merchant_name=MERCHANT_NAME,
+            merchant_city=MERCHANT_CITY,
+            amount=round(float(amount), 2),
+            currency="USD",
+            bill_number=(note or f"INV{uid}{int(time.time())}")[:25],
+            static=False
+        )
+        if qr: return qr
+    except Exception:
+        pass
+    
+    # បើ Library Error ប្រើប្រាស់ NBC Standard Builder ផ្ទាល់
+    clean_bill = "".join(ch for ch in (note or f"INV{uid}{int(time.time())}") if ch.isalnum())[:20]
+    return _generate_bakong_standard_khqr(BANK_ACCOUNT, MERCHANT_NAME, MERCHANT_CITY, amount, clean_bill)
 
 def _check_bakong(md5, amount, start_ts):
     try:
