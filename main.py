@@ -28,11 +28,9 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN          = "8819304095:AAHKZRYR2sEr5nLB0wI0O3ti-D_eq1kXmBM"
 ADMIN_ID           = 5915683588
 
-# Bakong KHQR Config
-BAKONG_TOKEN       = "rbkMVUSQPooaey51jm1cD5ECnzmHyeNX7fBX4Afc16GU8k"
-BANK_ACCOUNT       = "samnang_mon@bkrt"
-MERCHANT_NAME      = "Smey Lov"
-MERCHANT_CITY      = "Phnom Penh"
+# ABA KHQR Config (យកតាម Original Decoded QR របស់អ្នកផ្ទាល់)
+MERCHANT_NAME      = "MON SAMNANG"
+MERCHANT_CITY      = "KAMPONG THOM"
 DEPOSIT_EXPIRE_SEC = 300  # ៥ នាទី
 POLL_INTERVAL      = 5
 
@@ -72,7 +70,7 @@ def ded_bal(uid, amt):
     _save(WALLETS_FILE, wallets)
 
 # ═══════════════════════════════════════════════════════════
-#  GENUINE NBC EMVCO KHQR BUILDER (ACCORDING TO NBC SPECS)
+#  ABA PAYWAY KHQR BUILDER (ACCORDING TO YOUR ABA QR)
 # ═══════════════════════════════════════════════════════════
 def _calc_crc16_ccitt(data_bytes):
     crc = 0xFFFF
@@ -89,29 +87,29 @@ def _tag(tag_id, value):
     val_str = str(value)
     return f"{tag_id:02d}{len(val_str):02d}{val_str}"
 
-def _generate_bakong_standard_khqr(account_id, name, city, amount, bill_no):
-    # Tag 29 ផ្លូវការរបស់ធនាគារជាតិ NBC:
-    # Subtag 00 = bakong@nbc (10 characters)
-    # Subtag 01 = Account ID របស់ម្ចាស់គណនី
-    sub29 = _tag(0, "bakong@nbc") + _tag(1, account_id)
-    tag29 = _tag(29, sub29)
+def _generate_aba_khqr(amount, bill_no):
+    # Tag 30: ABA Bank PayWay Specific Account Configuration
+    sub30 = _tag(0, "abaakhppxxx@abaa") + _tag(1, "126090314291066")
+    tag30 = _tag(30, sub30)
+
+    # Tag 62: Additional Data (Reference/Bill)
+    sub62 = _tag(1, "PAYWAY@ABA") + _tag(7, "195096") + _tag(9, bill_no[:20])
+    tag62 = _tag(62, sub62)
 
     amt_str = f"{float(amount):.2f}"
-    sub62 = _tag(1, bill_no[:25])
-    tag62 = _tag(62, sub62)
 
     raw = (
         _tag(0, "01") +                # Payload Format Indicator
-        _tag(1, "12") +                # 12 = Dynamic QR
-        tag29 +                        # Merchant Account Info (NBC Bakong)
-        _tag(52, "5999") +             # Merchant Category Code
-        _tag(53, "840") +              # 840 = USD
-        _tag(54, amt_str) +            # ចំនួនទឹកប្រាក់
-        _tag(58, "KH") +               # Country Code
-        _tag(59, name[:25]) +          # ឈ្មោះ Merchant Name
-        _tag(60, city[:15]) +          # ទីក្រុង Merchant City
-        tag62 +                        # Additional Data (Bill Number)
-        "6304"                         # CRC Header
+        _tag(1, "12") +                # Dynamic QR (12)
+        tag30 +                        # Tag 30 ABA PayWay
+        _tag(52, "0465") +             # Merchant Category Code
+        _tag(53, "840") +              # USD (840)
+        _tag(54, amt_str) +            # Amount
+        _tag(58, "KH") +               # Country
+        _tag(59, MERCHANT_NAME) +      # MON SAMNANG
+        _tag(60, MERCHANT_CITY) +      # KAMPONG THOM
+        tag62 +                        # Tag 62
+        "6304"                         # CRC Tag Header
     )
     return raw + _calc_crc16_ccitt(raw.encode("utf-8"))
 
@@ -202,22 +200,8 @@ def _generate_styled_khqr_image(qr_str, amount, merchant_name):
     return buf
 
 # ═══════════════════════════════════════════════════════════
-#  BAKONG KHQR & COUNTDOWN
+#  DEPOSIT & COUNTDOWN
 # ═══════════════════════════════════════════════════════════
-def _generate_khqr(uid, amount, note=""):
-    try:
-        clean_bill = "".join(ch for ch in (note or f"INV{uid}{int(time.time())}") if ch.isalnum())[:20]
-        return _generate_bakong_standard_khqr(BANK_ACCOUNT, MERCHANT_NAME, MERCHANT_CITY, amount, clean_bill)
-    except Exception as e:
-        logger.error(f"[_generate_khqr] Error: {e}")
-        return ""
-
-def _check_bakong(md5, amount, start_ts):
-    try:
-        from bakong_khqr import KHQR as _BK
-        return _BK(BAKONG_TOKEN).check_payment(str(md5)) == "PAID"
-    except Exception: return False
-
 def _build_caption(amount, remaining_sec):
     mins = max(0, remaining_sec // 60)
     secs = max(0, remaining_sec % 60)
@@ -226,9 +210,10 @@ def _build_caption(amount, remaining_sec):
         f"💳 <b>ដាក់ប្រាក់ (Top Up)</b>\n"
         f"━━━━━━━━━━━━━━━━━━\n"
         f"💰 ចំនួន: <b>${amount:.2f}</b>\n"
+        f"👤 អ្នកទទួល: <b>{MERCHANT_NAME}</b>\n"
         f"⏱ ផុតកំណត់ក្នុងរយ: <b>{timer_text} នាទី</b> ⏳\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📱 Scan ជាមួយ Bakong / ABA / Wing"
+        f"📱 Scan ជាមួយ ABA Mobile / Bakong"
     )
 
 def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts):
@@ -242,22 +227,8 @@ def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts)
         dep = store_deps.get(dep_id)
         if not dep or dep.get("status") != "pending":
             return
-        
-        md5 = dep.get("md5", "")
-        if _check_bakong(md5, amount, start_ts):
-            add_bal(uid, round(amount, 2))
-            store_deps[dep_id]["status"] = "confirmed"
-            _save(STORE_DEP_FILE, store_deps)
-            try:
-                bot.edit_message_caption(
-                    chat_id=uid, message_id=msg_id,
-                    caption=f"✅ <b>ការទូទាត់ទទួលបានជោគជ័យ!</b>\n💰 ចំនួន: +${amount:.2f}"
-                )
-                bot.send_message(uid, f"✅ <b>ដាក់លុយបានជោគជ័យ!</b>\n💰 +${amount:.2f}\n💳 សរុប: <b>${bal(uid):.2f}</b>", reply_markup=user_kb())
-                bot.send_message(ADMIN_ID, f"💰 <b>Auto KHQR</b>\n👤 <code>{uid_str}</code> | +${amount:.2f}")
-            except: pass
-            return
 
+        # អាប់ដេតនាទីរៀងរាល់ 10 វិនាទី
         if now - last_edit_time >= 10 and msg_id:
             try:
                 bot.edit_message_caption(
@@ -284,24 +255,27 @@ def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts)
 def _send_deposit_qr(uid, amount):
     uid_str = str(uid)
     bill_no = f"INV{uid}{int(time.time())}"[:20]
-    qr_str = _generate_khqr(uid, amount, bill_no)
-    if not qr_str:
-        bot.send_message(uid, "⚠️ មានបញ្ហាបង្កើត QR! សូមទាក់ទង Admin"); return
-
-    import hashlib
-    md5_hash = hashlib.md5(qr_str.encode()).hexdigest()
+    
+    try:
+        qr_str = _generate_aba_khqr(amount, bill_no)
+    except Exception as e:
+        logger.error(f"Error building QR: {e}")
+        bot.send_message(uid, "⚠️ មានបញ្ហាបង្កើត QR! សូមទាក់ទង Admin")
+        return
 
     dep_id = f"dep_{uid}_{int(time.time())}"
-    store_deps[dep_id] = {"uid": uid_str, "amount": amount, "status": "pending", "md5": md5_hash, "qr_str": qr_str}
+    store_deps[dep_id] = {"uid": uid_str, "amount": amount, "status": "pending", "qr_str": qr_str}
     _save(STORE_DEP_FILE, store_deps)
 
     initial_cap = _build_caption(amount, DEPOSIT_EXPIRE_SEC)
 
+    # ប៊ូតុងសម្រាប់ Admin បញ្ចូលលុយជូនភ្លាមៗពេលភ្ញៀវបាញ់ចូលគណនី ABA
     admin_kb_dep = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ បញ្ចូលលុយឱ្យ", callback_data=f"manual_dep:approve:{dep_id}"),
          InlineKeyboardButton("❌ បដិសេធ", callback_data=f"manual_dep:reject:{dep_id}")]
     ])
-    try: bot.send_message(ADMIN_ID, f"📥 <b>ការស្នើដាក់លុយ!</b>\n👤 <code>{uid_str}</code> | 💰 <b>${amount:.2f}</b>", reply_markup=admin_kb_dep)
+    try: 
+        bot.send_message(ADMIN_ID, f"📥 <b>ការស្នើដាក់លុយថ្មី!</b>\n👤 <code>{uid_str}</code> | 💰 <b>${amount:.2f}</b>\n💡 <i>សូមពិនិត្យ ABA ប្រសិនបើឃើញលុយចូល ចុចប៊ូតុងខាងក្រោម៖</i>", reply_markup=admin_kb_dep)
     except: pass
 
     sent_msg = None
