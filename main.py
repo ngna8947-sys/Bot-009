@@ -28,10 +28,10 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN          = "8819304095:AAHKZRYR2sEr5nLB0wI0O3ti-D_eq1kXmBM"
 ADMIN_ID           = 5915683588
 
-# ABA PAYWAY RAW QR (យកតាម QR ដើមពិតប្រាកដរបស់អ្នក)
+# ABA PAYWAY RAW QR (កូដដើមសុទ្ធ ១០០% គ្មានការកែប្រែ)
 ABA_RAW_QR         = "00020101021130510016abaakhppxxx@abaa01151260903142910660208ABA Bank5204651353038405802KH5911MON SAMNANG6012KAMPONG THOM624268380010PAYWAY@ABA01071950962020903248607663044150"
 MERCHANT_NAME      = "MON SAMNANG"
-DEPOSIT_EXPIRE_SEC = 300  # ៥ នាទី
+DEPOSIT_EXPIRE_SEC = 300
 POLL_INTERVAL      = 5
 
 # ═══════════════════════════════════════════════════════════
@@ -68,32 +68,6 @@ def add_bal(uid, amt):
 def ded_bal(uid, amt):
     wallets[str(uid)] = max(0.0, round(bal(uid) - amt, 2))
     _save(WALLETS_FILE, wallets)
-
-# ═══════════════════════════════════════════════════════════
-#  DYNAMIC ABA KHQR GENERATOR
-# ═══════════════════════════════════════════════════════════
-def _calc_crc16(data_bytes):
-    crc = 0xFFFF
-    for b in data_bytes:
-        crc ^= (b << 8)
-        for _ in range(8):
-            if crc & 0x8000:
-                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-            else:
-                crc = (crc << 1) & 0xFFFF
-    return f"{crc:04X}"
-
-def _build_aba_qr_with_amount(amount):
-    # បំប្លែង Tag 01 ទៅ 12 (Dynamic QR) និងបន្ថែម Tag 54 (Amount)
-    amt_str = f"{float(amount):.2f}"
-    tag54 = f"54{len(amt_str):02d}{amt_str}"
-    
-    # ផ្ដាច់ផ្នែកខាងមុខ Tag 58 រួចបញ្ចូល Tag 54 ចូល
-    prefix = ABA_RAW_QR[:87].replace("010211", "010212")
-    suffix = ABA_RAW_QR[87:-4]
-    
-    payload = prefix + tag54 + suffix
-    return payload + _calc_crc16(payload.encode("utf-8"))
 
 # ═══════════════════════════════════════════════════════════
 #  DRAW STYLED ABA KHQR TEMPLATE
@@ -195,7 +169,8 @@ def _build_caption(amount, remaining_sec):
         f"🏦 ធនាគារ: <b>ABA Bank</b>\n"
         f"⏱ ផុតកំណត់ក្នុងរយ: <b>{timer_text} នាទី</b> ⏳\n"
         f"━━━━━━━━━━━━━━━━━━\n"
-        f"📱 Scan ជាមួយ ABA Mobile / Bakong"
+        f"📱 Scan ជាមួយ ABA Mobile / Bakong\n"
+        f"💡 <i>(សូមបញ្ចូលទឹកប្រាក់ចំនួន ${amount:.2f} ពេល Scan)</i>"
     )
 
 def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts):
@@ -210,7 +185,6 @@ def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts)
         if not dep or dep.get("status") != "pending":
             return
 
-        # អាប់ដេតនាទីរៀងរាល់ 10 វិនាទី
         if now - last_edit_time >= 10 and msg_id:
             try:
                 bot.edit_message_caption(
@@ -236,11 +210,7 @@ def _watch_deposit_and_countdown(uid, uid_str, dep_id, amount, msg_id, start_ts)
 
 def _send_deposit_qr(uid, amount):
     uid_str = str(uid)
-    
-    try:
-        qr_str = _build_aba_qr_with_amount(amount)
-    except Exception:
-        qr_str = ABA_RAW_QR
+    qr_str = ABA_RAW_QR  # ប្រើកូដដើមសុទ្ធដែល ABA បង្កើតជូន
 
     dep_id = f"dep_{uid}_{int(time.time())}"
     store_deps[dep_id] = {"uid": uid_str, "amount": amount, "status": "pending", "qr_str": qr_str}
@@ -257,7 +227,7 @@ def _send_deposit_qr(uid, amount):
             ADMIN_ID, 
             f"📥 <b>ការស្នើដាក់លុយថ្មី (ABA)!</b>\n"
             f"👤 <code>{uid_str}</code> | 💰 <b>${amount:.2f}</b>\n"
-            f"💡 <i>សូមពិនិត្យមើលកម្មវិធី ABA ប្រសិនបើឃើញប្រាក់ចូល ចុចប៊ូតុងខាងក្រោម៖</i>", 
+            f"💡 <i>សូមពិនិត្យ ABA ប្រសិនបើឃើញប្រាក់ចូល ចុចប៊ូតុងខាងក្រោម៖</i>", 
             reply_markup=admin_kb_dep
         )
     except: pass
