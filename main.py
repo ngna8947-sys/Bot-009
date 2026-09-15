@@ -8,7 +8,7 @@ from flask import Flask, jsonify
 
 # ─── Auto-install deps ───
 def _ensure_deps():
-    pkgs = {"PIL": "pillow", "qrcode": "qrcode"}
+    pkgs = {"PIL": "pillow", "qrcode": "qrcode", "bakong_khqr": "bakong-khqr"}
     for mod, pkg in pkgs.items():
         try: __import__(mod)
         except ImportError:
@@ -18,6 +18,7 @@ _ensure_deps()
 
 import qrcode
 from PIL import Image, ImageDraw, ImageFont
+from bakong_khqr import KHQR
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN          = "8819304095:AAHKZRYR2sEr5nLB0wI0O3ti-D_eq1kXmBM"
 ADMIN_ID           = 5915683588
 
-# គណនី Bakong ID ផ្លូវការរបស់អ្នក
+# គណនី Bakong
 BAKONG_ACCOUNT_ID  = "mon_samnang@bkrt"
 MERCHANT_NAME      = "SmeyLov"
 MERCHANT_CITY      = "Phnom Penh"
@@ -71,44 +72,59 @@ def ded_bal(uid, amt):
     _save(WALLETS_FILE, wallets)
 
 # ═══════════════════════════════════════════════════════════
-#  OFFICIAL NBC DYNAMIC KHQR BUILDER (EMVCo TAG 29)
+#  NBC STANDARD DYNAMIC KHQR (OFFICIAL LIB + FALLBACK)
 # ═══════════════════════════════════════════════════════════
 def _calc_crc16(data_bytes):
     crc = 0xFFFF
     for b in data_bytes:
         crc ^= (b << 8)
         for _ in range(8):
-            if crc & 0x8000:
-                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
-            else:
-                crc = (crc << 1) & 0xFFFF
+            if crc & 0x8000: crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else: crc = (crc << 1) & 0xFFFF
     return f"{crc:04X}"
 
-def _tag(tag_id, value):
-    val_str = str(value)
-    return f"{tag_id:02d}{len(val_str):02d}{val_str}"
+def _tag(t_id, val):
+    s = str(val)
+    return f"{t_id:02d}{len(s):02d}{s}"
 
-def _generate_bakong_dynamic_khqr(account_id, amount, bill_no):
-    # Tag 29: Bakong Standard Account (NBC)
+def _generate_dynamic_khqr_string(account_id, amount, bill_no):
+    # ប្រើប្រាស់ Bakong SDK ផ្លូវការជាជម្រើសចម្បង
+    try:
+        k = KHQR()
+        qr = k.create_qr(
+            account_id=account_id,
+            merchant_name=MERCHANT_NAME,
+            merchant_city=MERCHANT_CITY,
+            amount=round(float(amount), 2),
+            currency="USD",
+            bill_number=bill_no[:20],
+            store_label="MovieBot",
+            terminal_label="BotPay",
+            static=False
+        )
+        if qr: return qr
+    except Exception as e:
+        logger.warning(f"Bakong SDK fallback: {e}")
+
+    # Fallback: ស្តង់ដារ EMVCo Tag 29 & Tag 30
     sub29 = _tag(0, "bakong@nbc") + _tag(1, account_id)
     tag29 = _tag(29, sub29)
-
     amt_str = f"{float(amount):.2f}"
-    sub62 = _tag(1, bill_no[:20])
+    sub62 = _tag(1, bill_no[:20]) + _tag(7, "BotPay")
     tag62 = _tag(62, sub62)
 
     raw = (
-        _tag(0, "01") +                # Payload Format Indicator
-        _tag(1, "12") +                # 12 = Dynamic QR (មានភ្ជាប់ទឹកប្រាក់ស្រាប់)
-        tag29 +                        # Tag 29 Bakong Account
-        _tag(52, "5999") +             # Merchant Category Code
-        _tag(53, "840") +              # 840 = USD
-        _tag(54, amt_str) +            # ចំនួនទឹកប្រាក់អូតូម៉ាទិក
-        _tag(58, "KH") +               # Country Code
-        _tag(59, MERCHANT_NAME[:25]) + # Merchant Name
-        _tag(60, MERCHANT_CITY[:15]) + # Merchant City
-        tag62 +                        # Reference / Invoice No
-        "6304"                         # CRC Header
+        _tag(0, "01") +
+        _tag(1, "12") +
+        tag29 +
+        _tag(52, "5999") +
+        _tag(53, "840") +
+        _tag(54, amt_str) +
+        _tag(58, "KH") +
+        _tag(59, MERCHANT_NAME[:25]) +
+        _tag(60, MERCHANT_CITY[:15]) +
+        tag62 +
+        "6304"
     )
     return raw + _calc_crc16(raw.encode("utf-8"))
 
@@ -168,15 +184,15 @@ def _generate_styled_khqr_image(qr_str, amount, merchant_name):
 
     qr = qrcode.QRCode(
         version=None,
-        error_correction=qrcode.constants.ERROR_CORRECT_H,
-        box_size=12,
+        error_correction=qrcode.constants.ERROR_CORRECT_M,
+        box_size=10,
         border=0
     )
     qr.add_data(qr_str)
     qr.make(fit=True)
     qr_img = qr.make_image(fill_color="#000000", back_color="#FFFFFF").convert("RGBA")
 
-    qr_size = 510
+    qr_size = 500
     qr_img = qr_img.resize((qr_size, qr_size), Image.Resampling.LANCZOS)
     qr_top = 345
     card.paste(qr_img, ((card_w - qr_size) // 2, qr_top))
@@ -254,7 +270,7 @@ def _send_deposit_qr(uid, amount):
     bill_no = f"INV{uid}{int(time.time())}"[:20]
     
     try:
-        qr_str = _generate_bakong_dynamic_khqr(BAKONG_ACCOUNT_ID, amount, bill_no)
+        qr_str = _generate_dynamic_khqr_string(BAKONG_ACCOUNT_ID, amount, bill_no)
     except Exception as e:
         logger.error(f"Error building Dynamic KHQR: {e}")
         bot.send_message(uid, "⚠️ មានបញ្ហាបង្កើត QR! សូមទាក់ទង Admin")
@@ -266,7 +282,6 @@ def _send_deposit_qr(uid, amount):
 
     initial_cap = _build_caption(amount, DEPOSIT_EXPIRE_SEC)
 
-    # ប៊ូតុងបញ្ជាក់លុយសម្រាប់ Admin
     admin_kb_dep = InlineKeyboardMarkup([
         [InlineKeyboardButton("✅ បញ្ចូលលុយឱ្យ", callback_data=f"manual_dep:approve:{dep_id}"),
          InlineKeyboardButton("❌ បដិសេធ", callback_data=f"manual_dep:reject:{dep_id}")]
