@@ -1,4 +1,4 @@
-import json, logging, time, os, sys, subprocess, threading, io, crcmod
+import json, logging, time, os, sys, subprocess, threading, io
 import telebot
 from telebot.types import (
     ReplyKeyboardMarkup, KeyboardButton,
@@ -8,7 +8,7 @@ from flask import Flask, jsonify
 
 # ─── Auto-install deps ───
 def _ensure_deps():
-    pkgs = {"PIL": "pillow", "qrcode": "qrcode", "crcmod": "crcmod"}
+    pkgs = {"PIL": "pillow", "qrcode": "qrcode"}
     for mod, pkg in pkgs.items():
         try: __import__(mod)
         except ImportError:
@@ -72,8 +72,19 @@ def ded_bal(uid, amt):
     _save(WALLETS_FILE, wallets)
 
 # ═══════════════════════════════════════════════════════════
-#  NATIVE EMVCO KHQR GENERATOR
+#  PURE PYTHON CRC-16 & EMVCO KHQR
 # ═══════════════════════════════════════════════════════════
+def _calc_crc16_ccitt(data_bytes):
+    crc = 0xFFFF
+    for b in data_bytes:
+        crc ^= (b << 8)
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+    return f"{crc:04X}"
+
 def _tag(tag_id, value):
     val_str = str(value)
     return f"{tag_id:02d}{len(val_str):02d}{val_str}"
@@ -100,11 +111,7 @@ def _generate_native_khqr(account, name, city, amount, bill_no):
         tag62 +
         "6304"
     )
-
-    crc16 = crcmod.predefined.Crc("crc-ccitt-false")
-    crc16.update(raw.encode("utf-8"))
-    crc_hex = hex(crc16.crcValue)[2:].upper().zfill(4)
-    return raw + crc_hex
+    return raw + _calc_crc16_ccitt(raw.encode("utf-8"))
 
 # ═══════════════════════════════════════════════════════════
 #  DRAW STYLED KHQR TEMPLATE
