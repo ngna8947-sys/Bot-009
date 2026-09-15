@@ -29,7 +29,7 @@ BOT_TOKEN          = "8819304095:AAHKZRYR2sEr5nLB0wI0O3ti-D_eq1kXmBM"
 ADMIN_ID           = 5915683588
 
 # ABA KHQR Config (យកតាម Original Decoded QR របស់អ្នកផ្ទាល់)
-MERCHANT_NAME      = "MON SAMNANG"
+MERCHANT_NAME      = "SmeyLov"
 MERCHANT_CITY      = "KAMPONG THOM"
 DEPOSIT_EXPIRE_SEC = 300  # ៥ នាទី
 POLL_INTERVAL      = 5
